@@ -1,0 +1,15 @@
+[Unit]
+Description=Automatic brightness control
+After=network.target
+
+[Service]
+ExecStart=/home/frame/linux-brightness-control/brightness_control.sh systemd
+Restart=always
+User=root
+Group=root
+Environment=PATH=/usr/bin:/usr/local/bin
+Environment=NODE_ENV=production
+WorkingDirectory=/home/frame/linux-brightness-control/
+
+[Install]
+WantedBy=multi-user.target
