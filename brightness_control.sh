@@ -1,25 +1,30 @@
 #!/bin/bash
 
 # Check if the script is being run as a systemd service
-if [[ $1 == "systemd" ]]; then
+# if [[ $1 == "systemd" ]]; then
   # Redirect all output to /dev/null
-  exec >/dev/null 2>&1
-fi
+exec >/dev/shm/brightness_control.log 2>&1
+# fi
+
+echo "Starting brightness control"
 
 # Number of measurements in seconds
 NUM_MEASUREMENTS=60
 
+# Gamma correction value
+gamma=1.8
+
 # Wildcard pattern for file search
 FILE_PATTERN="/sys/bus/iio/devices/iio:device*/in_illuminance_raw"
 
-# Scaling function with linear transformation
+# Scaling function with linear transformation and gamma correction
 scale_value() {
   local value="$1"
 
   # Scaling parameters (adjusted)
-  min_value=1000
-  max_value=700000
-  min_output=5
+  min_value=200
+  max_value=1000000
+  min_output=1
   max_output=100
 
   # Ensure value is within range
@@ -29,15 +34,25 @@ scale_value() {
     value=$max_value
   fi
 
-  # Calculate the scaled value using linear transformation
-  scaled_value=$(( (value - min_value) * (max_output - min_output) / (max_value - min_value) + min_output ))
+  # Calculate the linearly scaled value
+  linear_scaled_value=$(( (value - min_value) * (max_output - min_output) / (max_value - min_value) + min_output ))
 
-  echo "$scaled_value"
+  # Apply gamma correction
+  gamma_scaled_value=$(awk -v lsv="$linear_scaled_value" -v gamma="$gamma" 'BEGIN{print int(100*((lsv/100)^(1/gamma)))}')
+
+  echo "$gamma_scaled_value"
 }
 
 # Function to set display brightness
 set_brightness() {
   local brightness="$1"
+
+  # Check if /tmp/display_off file exists, if it does, set brightness to 0 and return
+  if [ -f "/tmp/display_off" ]; then
+    brightnessctl set 0% -q
+    # echo "Display brightness set to 0% due to /tmp/display_off"
+    return
+  fi
 
   # Ensure brightness is within range
   if ((brightness < 1)); then
@@ -46,15 +61,11 @@ set_brightness() {
     brightness=100
   fi
 
-  # Check current brightness
-  current_brightness=$(brightnessctl -m | cut -d',' -f4 | tr -d '%')
-
-  # Set the display brightness only if it's not 0%
-  if ((current_brightness > 0)); then
-    brightnessctl set "$brightness%" -q
-    echo "Display brightness set to $brightness%"
-  fi
+  # Set the display brightness
+  brightnessctl set "$brightness%" -q
+  # echo "Display brightness set to $brightness%"
 }
+
 
 # Array to store the last NUM_MEASUREMENTS averages
 averages=()
@@ -69,7 +80,7 @@ while true; do
       # Read the value from the file
       raw_value=$(cat "$file")
 
-      # Scale the value with linear transformation
+      # Scale the value with linear transformation and gamma correction
       scaled_value=$(scale_value "$raw_value")
 
       # Add the scaled value to the averages array
@@ -87,7 +98,7 @@ while true; do
       done
       average=$((sum / ${#averages[@]}))
 
-      echo "Rolling Average for ${file##*/}: $average% (Raw Value: $raw_value)"
+      # echo "Rolling Average for ${file##*/}: $average% (Raw Value: $raw_value)"
 
       # Set the display brightness every 5 seconds
       if (( counter % 5 == 0 )); then
